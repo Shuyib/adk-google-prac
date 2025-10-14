@@ -5,6 +5,7 @@ venv
 # Byte-compiled / cache
 __pycache__
 .pytest_cache
+.ruff_cache/
 
 # Distribution / packaging
 build
