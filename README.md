@@ -52,10 +52,6 @@ Function-calling with Python and Google ADK. This project demonstrates building 
 - [uv](https://github.com/astral-sh/uv) Python package and project manager      
   
 
-### License
-
-This project is licensed under [Apache 2.0 License](https://github.com/Shuyib/adk-google-prac/blob/main/LICENSE).
-
 ## Installation
 
 We recommend using Python 3.13 and `uv` for environment and dependency management.
@@ -174,4 +170,9 @@ adk web
 
 
 ## Contributing
-Please open issues or PRs. Keep secrets out of the repo and add tests for agent behaviors where possible.
+Please open issues or PRs. Keep secrets out of the repo and add tests for agent behaviors where possible.    
+
+### License
+
+This project is licensed under [Apache 2.0 License](https://github.com/Shuyib/adk-google-prac/blob/main/LICENSE).
+
