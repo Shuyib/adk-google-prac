@@ -1,0 +1,24 @@
+# Ignore Python virtual environment
+.venv
+venv
+
+# Byte-compiled / cache
+__pycache__
+.pytest_cache
+
+# Distribution / packaging
+build
+dist
+*.egg-info
+
+# Environment and secret files
+.env
+*.env
+*.json
+
+# VS Code settings
+.vscode
+
+# Dockerfile should be in the context root only
+Dockerfile
+
