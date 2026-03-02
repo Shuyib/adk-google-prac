@@ -22,6 +22,7 @@ Function-calling with Python and Google ADK. This project demonstrates building 
 - [Installation](#installation)
 - [Environment Variables](#environment-variables)
 - [Run in Docker](#run-in-docker)
+- [API Reference](#api-reference)
 - [Usage](#usage)
 - [Logging](#logging)
 - [Use cases](#use-cases)
@@ -36,12 +37,17 @@ Function-calling with Python and Google ADK. This project demonstrates building 
 
 ```text
 .
-├── my_agent
+├── agentops_agent/    # Communication agent with security guardrails
+├── my_agent/          # Basic agent example
+├── evals/             # Evaluation datasets
+├── logs/              # Application and security logs
 ├── .dockerignore
 ├── .gitignore
+├── DATASETS.md
+├── GUARDRAILS.md      # Security guardrails documentation
 ├── Makefile
 ├── .env.example
-├── your.json  # (example service account - do NOT commit)
+├── your.json          # (example service account - do NOT commit)
 ├── requirements.txt
 ```
 
@@ -51,6 +57,10 @@ Function-calling with Python and Google ADK. This project demonstrates building 
 - [Ruff](https://github.com/astral-sh/ruff) for linting code
 - [uv](https://github.com/astral-sh/uv) Python package and project manager      
   
+
+### License
+
+This project is licensed under [Apache 2.0 License](https://github.com/Shuyib/adk-google-prac/blob/main/LICENSE).
 
 ## Installation
 
@@ -108,6 +118,11 @@ GOOGLE_CLOUD_PROJECT=nameyourprojectid
 GOOGLE_CLOUD_LOCATION=punkrockfactory
 GOOGLE_API_KEY=getfromvertexai
 GOOGLE_GENAI_USE_VERTEXAI=1
+
+# Required for agentops_agent (Africa's Talking integrations):
+AT_USERNAME=your_username
+AT_API_KEY=your_api_key
+AGENT_MODE=interactive # or non-interactive
 ```
 
 Ensure that you have this service account credentials JSON. This is your id to use the google cloud features. 
@@ -117,6 +132,167 @@ Setup Google Cloud project > Create a Service account > Download your service ac
 ```bash
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/your/keyfile.json"
 ```
+
+**Where to find these values:**
+
+- **GOOGLE_CLOUD_PROJECT**: In the Google Cloud Console, click the project dropdown (top-left) to see the **ID** of your project (e.g., `my-project-123`).
+- **GOOGLE_CLOUD_LOCATION**: The region you want to use (e.g., `us-central1`, `europe-west4`). See [Vertex AI locations](https://cloud.google.com/vertex-ai/docs/general/locations).
+- **GOOGLE_API_KEY**: Go to **APIs & Services > Credentials** > **+ CREATE CREDENTIALS** > **API key**. It is recommended to restrict this key to the "Vertex AI API".
+
+## Run in Docker
+
+Build and run the project in a container. Do NOT copy credentials into the image — mount them at runtime or use a secret manager.
+
+1) Build using the Makefile:
+
+```bash
+make docker_build
+```
+
+2) Run locally (recommended — set `HOST_CREDENTIALS` to your host JSON path):
+
+```bash
+export HOST_CREDENTIALS=/absolute/path/to/at-project-XXXX.json
+export AT_API_KEY=your_api_key        # optional
+export AT_USERNAME=your_username     # optional
+export AGENT_MODE=interactive       # or non-interactive
+export GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/creds.json # Optional Google Cloud settings: service account credentials, API keys, project/location
+export GOOGLE_CLOUD_PROJECT=nameyourprojectid 
+export GOOGLE_CLOUD_LOCATION=punkrockfactory
+export GOOGLE_GENAI_USE_VERTEXAI=1
+export GOOGLE_API_KEY=getfromvertexai
+
+make docker_run
+```
+
+This `make docker_run` uses secure defaults: mounts the credential file read-only into `/run/secrets/creds.json`, sets `GOOGLE_APPLICATION_CREDENTIALS`, runs the container with `--read-only`, `--tmpfs /tmp`, drops Linux capabilities, and maps port 80.
+
+3) Stop the container:
+
+```bash
+make docker_stop
+```
+
+If you prefer to run `docker` directly, an example equivalent is:
+
+```bash
+docker build -t adk-agent:v0 .
+docker run --rm -d \
+    --name adk-agent \
+    --user adkuser \
+    --read-only \
+    --tmpfs /tmp:rw,size=64m \
+    --cap-drop ALL \
+    --cap-add NET_BIND_SERVICE \
+    --health-cmd="curl -f http://localhost/health || exit 1" \
+    --health-interval=30s \
+    -v "${HOST_CREDENTIALS}:/run/secrets/creds.json:ro" \
+    -e GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/creds.json \
+    -e AT_API_KEY="${AT_API_KEY}" \
+    -e AT_USERNAME="${AT_USERNAME}" \
+    -e AGENT_MODE=interactive \
+    -e GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT}" \
+    -e GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION}" \
+    -e GOOGLE_GENAI_USE_VERTEXAI=1 \
+    -e GOOGLE_API_KEY="${GOOGLE_API_KEY}" \
+    -p 80:80 \
+    adk-agent:v0
+```
+
+For production, use your container orchestrator to mount secrets and enforce runtime hardening (read-only root, seccomp, AppArmor, dropped capabilities, resource limits).
+
+## API Reference
+
+Once the container is running (`make docker_run`), the ADK API server is available on **http://localhost:80**.
+
+### Interactive docs
+
+| URL | Description |
+|-----|-------------|
+| http://localhost:80/docs | Swagger UI — browse and try every endpoint |
+| http://localhost:80/openapi.json | Raw OpenAPI 3 schema |
+| http://localhost:80/health | Health check (`{"status":"ok"}`) |
+
+### Typical workflow
+
+All agent interactions follow three steps: **list apps → create session → run**.
+
+#### 1. List available agents
+
+```bash
+curl http://localhost:80/list-apps
+```
+
+Example response:
+```json
+["agentops_agent", "my_agent"]
+```
+
+#### 2. Create a session
+
+```bash
+curl -X POST http://localhost:80/apps/agentops_agent/users/user-1/sessions \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+Example response:
+```json
+{"id": "sess-abc123", "app_name": "agentops_agent", "user_id": "user-1", "state": {}, "events": []}
+```
+
+#### 3. Send a message (non-streaming)
+
+```bash
+curl -X POST http://localhost:80/run \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "app_name": "agentops_agent",
+    "user_id": "user-1",
+    "session_id": "sess-abc123",
+    "new_message": {
+      "role": "user",
+      "parts": [{"text": "What time is it in Nairobi?"}]
+    }
+  }'
+```
+
+#### 4. Send a message (streaming via SSE)
+
+```bash
+curl -N -X POST http://localhost:80/run_sse \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "app_name": "agentops_agent",
+    "user_id": "user-1",
+    "session_id": "sess-abc123",
+    "new_message": {
+      "role": "user",
+      "parts": [{"text": "Summarise the top Google result for green hydrogen."}]
+    }
+  }'
+```
+
+Each SSE event is a JSON object with an `content` or `actions` key. The stream ends with a `[DONE]` sentinel.
+
+#### 5. Retrieve session history
+
+```bash
+curl http://localhost:80/apps/agentops_agent/users/user-1/sessions/sess-abc123
+```
+
+### Common environment variables passed to the API
+
+| Variable | Purpose |
+|----------|---------|
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to service-account JSON inside the container (`/run/secrets/creds.json`) |
+| `GOOGLE_CLOUD_PROJECT` | GCP project ID |
+| `GOOGLE_CLOUD_LOCATION` | Vertex AI region (e.g. `us-central1`) |
+| `GOOGLE_GENAI_USE_VERTEXAI` | Set `1` to route through Vertex AI instead of AI Studio |
+| `GOOGLE_API_KEY` | AI Studio API key (used when `GOOGLE_GENAI_USE_VERTEXAI=0`) |
+| `AGENT_MODE` | `interactive` or `non-interactive` — controls model and confirmation behaviour |
+
+> **Tip:** The full OpenAPI schema at `/openapi.json` is the authoritative reference for every endpoint, its request body, and all response shapes.
 
 ## Logging
 
@@ -141,8 +317,11 @@ Use `adk` CLI to scaffold and run agents provided by Google ADK:
 # create an agent skeleton
 adk create my_agent
 
-# run a named agent (or use `adk run` per your project's entry points)
+# run the basic agent
 adk run my_agent
+
+# run the communication agent with guardrails
+adk run agentops_agent
 ```
 
 Web UI (if supported by the agent):
@@ -155,7 +334,7 @@ adk web
 
 - Observability: <https://google.github.io/adk-docs/observability/agentops/>
 - Evaluation: <https://google.github.io/adk-docs/evaluate/>
-- Guadrails: <https://google.github.io/adk-docs/safety/#in-tool-guardrails>
+- Guardrails: See [GUARDRAILS.md](./GUARDRAILS.md) for our comprehensive security implementation, or read the [Google ADK Safety docs](https://google.github.io/adk-docs/safety/#in-tool-guardrails).
 
 ## Limitations
 
@@ -170,9 +349,4 @@ adk web
 
 
 ## Contributing
-Please open issues or PRs. Keep secrets out of the repo and add tests for agent behaviors where possible.    
-
-### License
-
-This project is licensed under [Apache 2.0 License](https://github.com/Shuyib/adk-google-prac/blob/main/LICENSE).
-
+Please open issues or PRs. Keep secrets out of the repo and add tests for agent behaviors where possible.

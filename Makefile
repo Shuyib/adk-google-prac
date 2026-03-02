@@ -12,9 +12,10 @@
 # Specify pip location in virtual environment
 PYTHON := .venv/bin/python3
 PIP := .venv/bin/pip3
-DOCKER_IMAGE_NAME := test_app
+DOCKER_IMAGE_NAME := adk-agent
 DOCKER_IMAGE_VERSION := v0.0.0
 DOCKER_IMAGE_TAG := $(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_VERSION)
+DOCKER_PLATFORM ?= $(shell arch=$$(uname -m); if [ "$$arch" = "arm64" ] || [ "$$arch" = "aarch64" ]; then echo linux/arm64/v8; elif [ "$$arch" = "x86_64" ] || [ "$$arch" = "amd64" ]; then echo linux/amd64; else echo linux/amd64; fi)
 
 #-----------------------------------------------------------------
 # Package Manager Detection
@@ -245,8 +246,9 @@ review-logging:
 
 docker_build: Dockerfile
 	# build container. Feel freee to change the platform given your needs
-	# docker build -platform linux/amd64 -t plot-timeseries-app:v0 .
-	# podman build -platform linux/amd64 -t plot-timeseries-app:v0 .
+	@echo "Building docker image $(DOCKER_IMAGE_TAG)"
+	# Build the image (pin platform if needed)
+	@docker build --platform $(DOCKER_PLATFORM) -t $(DOCKER_IMAGE_TAG) .
 
 docker_run_test: Dockerfile
 	# linting Dockerfile
@@ -260,9 +262,39 @@ docker_clean: Dockerfile
 
 docker_run: Dockerfile docker_build
 	# run docker
-	# # podman run --platform linux/amd64-e ENDPOINT_URL -e SECRET_KEY -e SPACES_ID -e SPACES_NAME plot-timeseries-app:v0
-	# docker run --platform linux/amd64 -e ENDPOINT_URL -e SECRET_KEY -e SPACES_ID -e SPACES_NAME plot-timeseries-app:v0
+	@echo "Preparing to run $(DOCKER_IMAGE_TAG)"
+	# Recommended: set HOST_CREDENTIALS to the absolute path of your service account JSON on the host
+	@if [ -z "$(HOST_CREDENTIALS)" ]; then \
+		echo "ERROR: please set HOST_CREDENTIALS=/absolute/path/to/creds.json before running 'make docker_run'"; \
+		exit 1; \
+	fi
+	# Run container with secure defaults: read-only filesystem, tmpfs for /tmp, drop all capabilities
+	@docker run --rm -d \
+		--platform $(DOCKER_PLATFORM) \
+		--name $(DOCKER_IMAGE_NAME) \
+		-v $(HOST_CREDENTIALS):/run/secrets/creds.json:ro \
+		-e GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/creds.json \
+		-e AT_API_KEY=$(AT_API_KEY) \
+		-e AT_USERNAME=$(AT_USERNAME) \
+		-e AGENT_MODE=$(AGENT_MODE) \
+		-e GOOGLE_CLOUD_PROJECT=$(GOOGLE_CLOUD_PROJECT) \
+		-e GOOGLE_CLOUD_LOCATION=$(GOOGLE_CLOUD_LOCATION) \
+		-e GOOGLE_GENAI_USE_VERTEXAI=$(GOOGLE_GENAI_USE_VERTEXAI) \
+		-e GOOGLE_API_KEY=$(GOOGLE_API_KEY) \
+		--read-only \
+		--tmpfs /tmp:rw,size=64m \
+		--tmpfs /tmp/adk-logs:rw,size=32m \
+		--cap-drop ALL \
+		--cap-add NET_BIND_SERVICE \
+		-p 80:80 \
+		$(DOCKER_IMAGE_TAG)
 	
+
+docker_stop:
+	@echo "Stopping and removing container $(DOCKER_IMAGE_NAME)"
+	-@docker stop $(DOCKER_IMAGE_NAME) || true
+	-@docker rm $(DOCKER_IMAGE_NAME) || true
+
 
 docker_image_size:
 	# Show the size of the Docker image
@@ -281,6 +313,7 @@ docker_push: docker_build
 	# podman push registry.digitalocean.com/<my-registry>/<my-image>
 
  help:
+	# print help message
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Available targets:"
@@ -303,6 +336,7 @@ docker_push: docker_build
 	@echo "  docker_run_test Lint Dockerfile"
 	@echo "  docker_clean    Remove dangling images, containers, volumes, and networks"
 	@echo "  docker_run      Run Docker container"
+	@echo "  docker_stop     Stop and remove running container ($(DOCKER_IMAGE_NAME))"
 	@echo "  docker_push     Push Docker container to registry"
 	@echo "  help            Show this help message"
 
@@ -314,13 +348,8 @@ env-example:
 		cp .env.example .env && echo ".env created from .env.example"; \
 	fi
 
-show-env:
-	@echo "Current important environment variables (redacted):"
-	@echo "GOOGLE_APPLICATION_CREDENTIALS=$(if [ -n \"$$GOOGLE_APPLICATION_CREDENTIALS\" ]; then echo \"$$GOOGLE_APPLICATION_CREDENTIALS\"; else echo \"(not set)\"; fi)"
-	@echo "GOOGLE_CLOUD_PROJECT=$(if [ -n \"$$GOOGLE_CLOUD_PROJECT\" ]; then echo \"$$GOOGLE_CLOUD_PROJECT\"; else echo \"(not set)\"; fi)"
-
 
 # .PHONY tells make that these targets do not represent actual files
-.PHONY: activate format clean lint test build run install ruff ruff-fix ruff-install docker_build docker_run docker_push docker_clean docker_run_test
+.PHONY: activate format clean lint test build run install ruff ruff-fix ruff-install docker_build docker_run docker_push docker_clean docker_run_test docker_stop
 
 all: install format lint test run docker_build docker_run docker_push
